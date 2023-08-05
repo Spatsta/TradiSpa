@@ -309,7 +309,7 @@ PlotMulI=function(w,z){
 # 2022.1单观测、多变量Moran指数矩阵及检验(利用Queen邻接的权阵)
 ```{r}
 ##数据读取
-air_202211 <- read.xlsx("./data/空气质量数据/2022.11.xlsx")
+air_202211 <- read.xlsx("./2022.11.xlsx")
 data_202211=as.matrix(air_202211[,7:10],nrow=630,ncol=4)
 
 ##**********************数据简化(取平均数)***************************
@@ -325,7 +325,7 @@ for (i in 1:21) {
 pheatmap(as.data.frame(data202211),show_rownames = TRUE,show_colnames = TRUE,fontsize = 2,color = colorRampPalette(c('#0000ff','#ffffff','#ff0000'))(50),annotation_legend = TRUE,scale = "column",cluster_rows = FALSE,cluster_cols = FALSE)
 
 ##权重矩阵
-W=read.xlsx("./data/空间权重矩阵/W_contiguityQueen.xlsx")
+W=read.xlsx("./W_contiguityQueen.xlsx")
 W_con=as.matrix(W[1:21,2:22],nrow=21,ncol=21)
 options(digits = 3)
 Cov=cor(data202211)
