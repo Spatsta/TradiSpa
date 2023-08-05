@@ -1,0 +1,491 @@
+---
+title: "莫兰矩阵"
+subtitle: "202201多维的莫兰指数"
+author: "张策"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: flatly
+    highlight: pygments
+    code_download: true
+    #code_folding: hide
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE, 
+                      message = FALSE
+                      )
+library(tidyverse)
+library(ggplot2)
+library(openxlsx)
+library(spdep)
+library(pheatmap)
+library(MASS)
+library(grid)
+library(gridExtra)
+library(fBasics)
+
+
+
+#权重矩阵归一化
+WToOne=function(W){
+  W=W/sum(colSums(W))
+  return(W)
+}
+
+#权重矩阵列标准化
+WColNormalization=function(W){
+  col=colSums(W)
+  for (i in 1:nrow(W)) {
+    for (j in 1:ncol(W)) {
+      W[j,i]=W[j,i]/col[i]
+    }
+  }
+  return(W)
+}
+
+#数据矩阵标准化
+DataColNormalization=function(data){
+  means=colMeans(data)
+  stds=numeric(ncol(data))
+  for (i in 1:ncol(data)) {
+    sum=0
+    for (j in 1:nrow(data)) {
+      sum=sum+(data[j,i]-means[i])^2
+    }
+    stds[i]=sqrt(sum/nrow(data))
+    data[,i]=(data[,i]-means[i])/stds[i]
+  }
+  return(data)
+}
+
+#传统莫兰的计算
+Tradional_I=function(data,W){
+  return(t(data)%*%W%*%data)
+}
+
+#检验传统莫兰
+Test_Tra_I=function(data,w){
+  means=colMeans(data)
+  s2=numeric(ncol(data))
+  I=matrix(0,ncol(data),ncol(data))
+  s0=sum(colSums(w))
+  for (i in 1:ncol(data)) {
+    sum=0
+    for (j in 1:nrow(data)) {
+      sum=sum+(data[j,i]-means[i])^2
+    }
+    s2[i]=sum/nrow(data)
+  }
+  for(i in 1:ncol(data)){
+    for (j in 1:ncol(data)) {
+      fz=0
+      fm=0
+      for (m in 1:nrow(data)) {
+        for (n in 1:nrow(data)) {
+          fz=fz+w[m,n]*(data[m,i]-means[i])*(data[n,j]-means[j])
+        }
+      }
+      fm=s0*(sqrt(s2[i])*sqrt(s2[j]))
+      I[i,j]=fz/fm
+    }
+  }
+  return(I)
+}
+
+#小样本莫兰指数的计算
+SmallSet_I=function(data,W){
+  means=colMeans(data)
+  I=matrix(0,ncol(data),ncol(data))
+  Z=matrix(0,nrow(data),ncol(data))
+  Zw=W%*%data
+  for (i in 1:ncol(data)) {
+    Z[,i]=data[,i]-means[i]
+    Zw[,i]=Zw[,i]-means[i]
+  }
+  for (i in 1:ncol(data)) {
+    for (j in 1:ncol(data)) {
+      I[i,j]=(t(Z[,i])%*%Zw[,j])/(sqrt(t(Z[,i]%*%Z[,i]))*sqrt(t(Zw[,j]%*%Zw[,j])))
+    }
+  }
+  return(I)
+}
+  
+#t分布下的t检验
+T_test=function(I,N,m,n){#N表示自由度
+  result=matrix(0,nrow = m,ncol = n)#bool型，1表示显著，0表示不显著
+  t=matrix(0,nrow = m,ncol = n)#用于存储t得分
+  for (i in 1:m) {
+    for (j in 1:n) {
+      t[i,j]=sqrt(N-2)*sqrt((I[i,j]*I[i,j])/(1-I[i,j]*I[i,j]))
+      if(abs(t[i,j])>2.093){
+        result[i,j]=1
+      }
+    }
+  }
+  print("莫兰指数的t得分为:")
+  print(t)
+  print("T检验的bool值为(其中1表示显著，0表示不显著):")
+  print(result)
+}
+
+#传统莫兰指数显著性检验(Z得分检验)
+Ztest=function(I,W,m,n){#注:m,n表示莫兰矩阵维数
+  L=nrow(W)
+  result=matrix(0,nrow = m,ncol = n)#bool型，1表示显著，0表示不显著
+  Z=matrix(0,nrow = m,ncol = n)#用于存储Z得分
+  p=matrix(0,nrow = m,ncol = n)#用于存储p值
+  EI=-1/(L-1)
+  w0=0
+  w1=0
+  w2=0
+  for (i in 1:L) {
+    w2=w2+(sum(W[i,1:L])+sum(W[1:L,i]))^2
+    for (j in 1:L) {
+      w0=w0+W[i,j]
+      w1=w1+(W[i,j]+W[j,i])^2
+    }
+  }
+  DI=(L^2*w1-L*w2+3*w0^2)/(w0^2*(L^2-1))-EI^2
+  for (i in 1:m) {
+    for (j in 1:n) {
+      Z[i,j]=(I[i,j]-EI)/sqrt(DI)
+      p[i,j]=pnorm(Z[i,j])
+      if(abs(Z[i,j])>1.96){
+        result[i,j]=1
+      }
+    }
+  }
+  print("莫兰指数的Z得分为:")
+  print(Z)
+  print("莫兰指数的p值为:")
+  print(p)
+  print("Z得分检验的bool值为(其中1表示高高、低低聚集，-1表示高低聚集，0表示不显著):")
+  print(result)
+}
+
+#全局莫兰的随机置换检验
+global_RanPerTest=function(data,W,M){
+  a=matrix(0,ncol(data),ncol(data))#存储检验p值
+  result=matrix(0,ncol(data),ncol(data))#存储检验结果
+  I=numeric(M+1)#存储莫兰的排列
+  II=matrix(0,M+1,ncol(data)*ncol(data))
+  #生成随机排列
+  # c1=as.vector(sample(1:21, replace=FALSE))
+  for (i in 1:ncol(data)) {
+    for (j in 1:ncol(data)) {
+      m=1
+      I[m]=t(data[,i])%*%W%*%data[,j]
+      left=numeric(nrow(data))
+      right=numeric(nrow(data))
+      while (m<(M+1)) {
+        m=m+1
+        p=as.vector(sample(1:nrow(data), replace=FALSE))
+        #重排的data[,i],data[,j]
+        for (k in 1:nrow(data)) {
+          left[k]=data[p[k],i]
+          right[k]=data[p[k],j]
+        }
+        I[m]=left%*%W%*%right#R语言机制的原因，left、right不是矩阵不需要转置
+      }
+      #计算I[1]的rank
+      rank=M+1
+      for (r in 2:(M+1)) {
+        if(I[1]>I[r]){
+          rank=rank-1
+        }
+      }
+      II[,(i-1)*ncol(data)+j]=I
+      a[i,j]=rank/(M+1)
+      if(a[i,j]<0.05|a[i,j]==0.05){
+        result[i,j]=1
+      }else if(a[i,j]>0.95|a[i,j]==0.95){
+        result[i,j]=-1
+      }
+    }
+  }
+  # print("moran's:")
+  # print(II)
+  print("随机置换检验的p值为:")
+  print(a)
+  print("随机置换检验的bool值为(其中1表示高高、低低聚集，-1表示高低聚集，0表示不显著):")
+  return(result)
+}
+
+#局部莫兰的随机置换检验
+local_RanPerTest=function(data,W,m,n,M){
+  
+  a=matrix(0,m,n)#存储检验p值
+  result=matrix(0,m,n)#存储检验结果
+  rank=matrix(M+1,m,n)
+  I=matrix(0,nrow(data),M+1)#存储莫兰的排列
+  u=1#rank的列下标
+  for (i in 1:ncol(data)) {
+    for (j in 1:ncol(data)) {
+      o=1
+      I[,o]=diag(data[,i]%*%t(data[,j])%*%W)
+      left=matrix(0,nrow(data),1)
+      right=matrix(0,nrow(data),1)
+      while (o<(M+1)) {
+        o=o+1
+        p=as.vector(sample(1:nrow(data), replace=FALSE))
+        #重排的data[,i],data[,j]
+        for (k in 1:nrow(data)) {
+          left[k,1]=data[p[k],i]
+          right[k,1]=data[p[k],j]
+        }
+        I[,o]=diag(left%*%t(right)%*%W)
+      }
+      #计算I[,1]的rank
+      for (r in 1:m) {
+        for (c in 2:(M+1)) {
+          if(I[r,1]>I[r,c]){
+            rank[r,u]=rank[r,u]-1
+          }
+        }
+      }
+      u=u+1
+    }
+  }
+  for (i in 1:m) {
+    for (j in 1:n) {
+      a[i,j]=rank[i,j]/(M+1)
+      if(a[i,j]<0.05|a[i,j]==0.05){
+        result[i,j]=1
+      }else if(a[i,j]>0.95|a[i,j]==0.95){
+        result[i,j]=-1
+      }
+    }
+  }
+  print("随机置换检验的p值为:")
+  print(a)
+  print("随机置换检验的bool值为(其中1表示高高、低低聚集，-1表示高低聚集，0表示不显著):")
+  return(result)
+}
+
+#最后的莫兰矩阵：保留通过检验的莫兰指数
+Final_I=function(II,result){
+  I=matrix(0,nrow(II),ncol(II))
+  for (i in 1:nrow(result)) {
+    for (j in 1:ncol(result)) {
+      if(result[i,j]==1|result[i,j]==-1){
+        I[i,j]=II[i,j]
+      }
+    }
+  }
+  return(I)
+}
+
+#莫兰散点图
+PlotMulI=function(w,z){
+  L=nrow(w)
+  x=numeric(L)
+  y=numeric(L)
+  for (j in 1:ncol(z)){
+    X=z[,j]
+    for (i in 1:L) {
+      x[i]=z[i,j]
+      y[i]=w[i,]%*%X-w[i,i]*z[i,j]
+    }
+    df=data.frame(X=x,Y=y)
+    print(df%>%ggplot(aes(X,Y))+
+      geom_point()+
+      scale_x_continuous(limits = c(-3,3))+
+      scale_y_continuous(limits = c(-3,3))+
+      labs(x="z[i]",y="f",title = "莫兰散点图")+
+      theme(plot.title = element_text(hjust = .5,size = 15))+
+      geom_segment(x=0,xend=0,y=-3.2,yend=3.2,arrow = arrow(ends = "last"),colour='blue',size=1)+
+      geom_segment(x=-3.2,xend=3.2,y=0,yend=0,arrow = arrow(ends = "last"),colour='blue',size=1)
+      )
+  }
+}
+
+```
+
+# 2022.1单观测、多变量Moran指数矩阵及检验(利用Queen邻接的权阵)
+```{r}
+##数据读取
+air_202211 <- read.xlsx("./data/空气质量数据/2022.11.xlsx")
+data_202211=as.matrix(air_202211[,7:10],nrow=630,ncol=4)
+
+##**********************数据简化(取平均数)***************************
+data202211=matrix(0,21,4)
+d=30
+for (i in 1:21) {
+  data202211[i,]=colSums(data_202211[((i-1)*d+1):(i*30),])
+  data202211[i,]=data202211[i,]/d
+}
+# dim(data202211)
+
+#展示原数据的热力图
+pheatmap(as.data.frame(data202211),show_rownames = TRUE,show_colnames = TRUE,fontsize = 2,color = colorRampPalette(c('#0000ff','#ffffff','#ff0000'))(50),annotation_legend = TRUE,scale = "column",cluster_rows = FALSE,cluster_cols = FALSE)
+
+##权重矩阵
+W=read.xlsx("./data/空间权重矩阵/W_contiguityQueen.xlsx")
+W_con=as.matrix(W[1:21,2:22],nrow=21,ncol=21)
+options(digits = 3)
+Cov=cor(data202211)
+
+print("空间单元只有一个观测时的Moran指数矩阵:")
+MoranMatrix_1=Tradional_I(DataColNormalization(data202211),WToOne(W_con))
+MoranMatrix_1
+Test_Tra_I(data202211,W_con)
+
+#展示Moran指数矩阵的热力图
+pheatmap(as.data.frame(MoranMatrix_1),show_rownames = TRUE,show_colnames = TRUE,fontsize = 2,color = colorRampPalette(c('#0000ff','#ffffff','#ff0000'))(50),annotation_legend = TRUE,scale = "column",cluster_rows = FALSE,cluster_cols = FALSE)
+
+Ztest(MoranMatrix_1,W_con,4,4)
+print("******************************************************")
+#随机置换检验
+result2=global_RanPerTest(DataColNormalization(data202211),WToOne(W_con),500)
+result2
+```
+
+
+# 全局Moran指数矩阵元素的分布模拟(研究区域为矩形区域)
+```{r}
+#利用标准正态分布生成四维的模拟数据，研究区域为6*6的空间单元
+DIM=4
+N=100
+k=5000#循环次数
+MulData=matrix(0,N*N,DIM)
+#生成空间权重矩阵(基于矩形区域)
+w_queen=matrix(0,N*N,N*N)
+for (i in 1:nrow(w_queen)) {
+  for (j in i:ncol(w_queen)) {
+    if(j==i+1|j==i+N|j==i+(N+1)){
+      w_queen[i,j]=1
+      w_queen[j,i]=1
+    }
+  }
+}
+#计算1000、10000次莫兰矩阵
+I_mulmoran=matrix(0,k,DIM*DIM)
+for (i in 1:k) {
+  MulData[,1]=rnorm(N*N,106.99,1161.48)
+  MulData[,2]=rnorm(N*N,37.88,287.73)
+  MulData[,3]=rnorm(N*N,21.17,116.07)
+  MulData[,4]=rnorm(N*N,8.52,9.75)
+  Mul_MoranI=Tradional_I(DataColNormalization(MulData),WToOne(w_queen))
+  temp=c(Mul_MoranI[1,],Mul_MoranI[2,],Mul_MoranI[3,],Mul_MoranI[4,])#将矩阵拼接为一个长向量
+  I_mulmoran[i,]=temp
+}
+
+
+#****************************频率分布图及检验****************************
+pic=list()
+for (j in 1:(DIM*DIM)) {
+  pic[[j]]=ggplot(data.frame(Index=I_mulmoran[,j]),aes(Index,..density..)) +
+    geom_histogram(color='white',fill='gray60',binwidth = 0.004) +
+    geom_line(stat = 'density',size=1.5,linetype=2)+
+    labs(x = "MoranI_ij", y = "Frequency") +
+    theme_bw()
+  print(shapiro.test(I_mulmoran[,j]))#SW检验，p值大于0.05说明是正态
+  # print(normalTest(I_mulmoran[,j]))#SW检验，p值大于0.05说明是正态
+}
+pdf(file = "N1w.pdf",width =12,height = 9)
+grid.arrange(pic[[1]],pic[[2]],pic[[3]],pic[[4]],pic[[5]],pic[[6]],pic[[7]],pic[[8]],pic[[9]],pic[[10]],pic[[11]],pic[[12]],pic[[13]],pic[[14]],pic[[15]],pic[[16]])
+dev.off()
+
+setEPS()
+postscript("N1w.eps", width = 12, height = 9)
+grid.arrange(pic[[1]],pic[[2]],pic[[3]],pic[[4]],pic[[5]],pic[[6]],pic[[7]],pic[[8]],pic[[9]],pic[[10]],pic[[11]],pic[[12]],pic[[13]],pic[[14]],pic[[15]],pic[[16]])
+dev.off()
+
+# pdf(file = "N1wdensity.pdf",width =12,height = 9)
+# grid.arrange(densitys[[1]],densitys[[2]],densitys[[3]],densitys[[4]],densitys[[5]],densitys[[6]],densitys[[7]],densitys[[8]],densitys[[9]],densitys[[10]],densitys[[11]],densitys[[12]],densitys[[13]],densitys[[14]],densitys[[15]],densitys[[16]])
+# dev.off()
+# 
+# # print(grid.arrange(densitys[[1]],densitys[[2]],densitys[[3]],densitys[[4]],densitys[[5]],densitys[[6]],densitys[[7]],densitys[[8]],densitys[[9]],densitys[[10]],densitys[[11]],densitys[[12]],densitys[[13]],densitys[[14]],densitys[[15]],densitys[[16]]))
+# # ggsave("N6density.eps", width = 4.0, height = 3.0, device = cairo_ps)
+# 
+# setEPS()
+# postscript("N1wdensity.eps", width =12,height = 9)
+# grid.arrange(densitys[[1]],densitys[[2]],densitys[[3]],densitys[[4]],densitys[[5]],densitys[[6]],densitys[[7]],densitys[[8]],densitys[[9]],densitys[[10]],densitys[[11]],densitys[[12]],densitys[[13]],densitys[[14]],densitys[[15]],densitys[[16]])
+# dev.off()
+
+#*****************注意：很奇怪的现象是，当空间单元数很小时，只有主对角线上的元素不服从正态分布，而非主对角线上的元素在样本量较小时也服从正态分布，当空间单元大于2500时(试过)时，主对角线上也服从正态分布*****************
+
+
+#频率密度直方图的纵轴坐标乘以横轴组距的值，即一个柱子的面积代表"这个区间"的频率密度值,频率直方图的纵坐标表示的是这一点的密度f(x)(不要求0~1之间之间，但要求其积分小于等于1)，而不是F(x),F(x)才是频率(0~1之间),
+
+```
+
+
+
+## 2022.1单观测、多变量局部Moran指数矩阵及检验(利用Queen邻接的权阵)
+```{r}
+options(digits = 3)
+print("全局莫兰矩阵为:")
+multMoranI_2
+data_202201=DataColNormalization(data_202201)
+L=ncol(data_202201)
+Partial_I=matrix(0,nrow = 21,ncol = 16)
+k=1
+for (i in 1:L) {
+  for (j in 1:L) {
+    M=(data_202201[,i])%*%t(data_202201[,j])%*%WToOne(W_dis)
+    Partial_I[,k]=diag(M)
+    # print(sum(diag(M)))#此处检验迹等于全局莫兰指数
+    k=k+1
+  }
+}
+print("局部莫兰矩阵为:")
+Partial_I
+print("局部莫兰的随机置换检验如下(其中1表示显著，0表示不显著,显著性水平为0.05):")
+local_RanPerTest(DataColNormalization(data_202201),WToOne(W_dis),21,16,5000)
+
+# write.xlsx(as.data.frame(Partial_I), file = "Partial_I(2022.1).xlsx", row.names = FALSE, sheetName = "Sheet1")
+
+```
+
+
+# 局部Moran指数矩阵元素的分布模拟(研究区域为矩形区域、以第一行第二列的I_12为例)
+```{r}
+#利用标准正态分布生成四维的模拟数据，研究区域为6*6的空间单元
+DIM=4
+N=50
+k=5000#循环次数
+MulData=matrix(0,N*N,DIM)
+#生成空间权重矩阵(基于矩形区域)
+w_queen=matrix(0,N*N,N*N)
+for (i in 1:nrow(w_queen)) {
+  for (j in i:ncol(w_queen)) {
+    if(j==i+1|j==i+N|j==i+(N+1)){
+      w_queen[i,j]=1
+      w_queen[j,i]=1
+    }
+  }
+}
+#计算1000、10000次莫兰矩阵
+# I_mulmoran=matrix(0,k,DIM*DIM)
+Partial_I=matrix(0,k,N*N)#用于存储非主对角线上Moran的局部Moran
+for (i in 1:k) {
+  MulData[,1]=rnorm(N*N,106.99,1161.48)
+  MulData[,2]=rnorm(N*N,37.88,287.73)
+  MulData[,3]=rnorm(N*N,21.17,116.07)
+  MulData[,4]=rnorm(N*N,8.52,9.75)
+  Data=DataColNormalization(MulData)
+  M=Data[,2]%*%t(Data[,4])%*%WToOne(w_queen)#扩展空间权重方程
+  Partial_I[i,]=diag(M)
+}
+#频率分布图及检验
+for (j in 1:(N*N)) {
+  print(ggplot(data.frame(Index=Partial_I[,j]),aes(Index,..density..)) +
+          geom_histogram(color='white',fill='gray60',binwidth = 0.02) +
+          geom_line(stat='density',size=1.5,linetype=2)+
+          labs(x = "MoranI_ij_i", y = "频数") +
+          theme_bw())
+  # print(shapiro.test(I_mulmoran[,j]))#SW检验，p值大于0.05说明是正态
+  print(normalTest(Partial_I[,j]))#SW检验，p值大于0.05说明是正态
+}
+
+```
+
+
+
+
